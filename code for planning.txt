@@ -1,0 +1,348 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from sklearn.cluster import KMeans
+from math import radians, cos, sin, asin, sqrt
+import folium
+from folium.plugins import MarkerCluster
+
+class RFGatewayPlanner:
+    def __init__(self, coverage_radius=100, meters_per_gateway=120):
+        """
+        Initialize the RF Gateway Planner.
+        
+        Args:
+            coverage_radius: Radius in meters for gateway coverage
+            meters_per_gateway: Target number of meters per gateway
+        """
+        self.coverage_radius = coverage_radius
+        self.meters_per_gateway = meters_per_gateway
+        self.meters_df = None
+        self.gateways_df = None
+        
+    def haversine_distance(self, lon1, lat1, lon2, lat2):
+        """
+        Calculate the great circle distance between two points 
+        on the earth (specified in decimal degrees)
+        """
+        # Convert decimal degrees to radians
+        lon1, lat1, lon2, lat2 = map(radians, [lon1, lat1, lon2, lat2])
+        
+        # Haversine formula
+        dlon = lon2 - lon1 
+        dlat = lat2 - lat1 
+        a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
+        c = 2 * asin(sqrt(a)) 
+        r = 6371000  # Radius of earth in meters
+        return c * r
+    
+    def load_meter_data(self, file_path=None, data=None):
+        """
+        Load meter data from file or directly from dataframe.
+        File should be CSV with columns 'latitude' and 'longitude'.
+        """
+        if file_path:
+            self.meters_df = pd.read_csv(file_path)
+        elif data is not None:
+            self.meters_df = data
+        else:
+            raise ValueError("Either file_path or data must be provided")
+            
+        print(f"Loaded {len(self.meters_df)} meter locations")
+        return self.meters_df
+    
+    def plan_gateways(self, method='kmeans'):
+        """
+        Plan gateway locations to cover all meters.
+        
+        Args:
+            method: Method to use for planning gateways ('kmeans' or 'greedy')
+            
+        Returns:
+            DataFrame of gateway locations
+        """
+        if self.meters_df is None:
+            raise ValueError("Meter data must be loaded first")
+            
+        if method == 'kmeans':
+            return self._plan_gateways_kmeans()
+        elif method == 'greedy':
+            return self._plan_gateways_greedy()
+        else:
+            raise ValueError("Invalid method. Choose 'kmeans' or 'greedy'")
+    
+    def _plan_gateways_kmeans(self):
+        """Use K-means clustering to plan gateway locations."""
+        # Estimate number of gateways needed
+        n_meters = len(self.meters_df)
+        estimated_gateways = max(1, n_meters // self.meters_per_gateway)
+        
+        # Extract coordinates for clustering
+        X = self.meters_df[['longitude', 'latitude']].values
+        
+        # Apply K-means clustering
+        kmeans = KMeans(n_clusters=estimated_gateways, random_state=42)
+        kmeans.fit(X)
+        
+        # Get the gateway locations (centroids)
+        gateway_locs = kmeans.cluster_centers_
+        
+        # Create dataframe of gateway locations
+        self.gateways_df = pd.DataFrame(gateway_locs, columns=['longitude', 'latitude'])
+        self.gateways_df['gateway_id'] = self.gateways_df.index
+        
+        # Assign meters to gateways
+        self.meters_df['gateway_id'] = kmeans.labels_
+        
+        # Check coverage and adjust if needed
+        self._validate_and_adjust_coverage()
+        
+        return self.gateways_df
+    
+    def _plan_gateways_greedy(self):
+        """Use greedy algorithm to plan gateway locations."""
+        # Extract coordinates
+        meters = self.meters_df[['longitude', 'latitude']].values
+        
+        gateways = []
+        uncovered_meters = set(range(len(meters)))
+        
+        while uncovered_meters:
+            # Find the location that covers the most uncovered meters
+            best_loc = None
+            best_coverage = set()
+            
+            # Try each meter location as a potential gateway
+            for i in range(len(meters)):
+                # Find all meters within coverage radius
+                covered = set()
+                for j in uncovered_meters:
+                    dist = self.haversine_distance(
+                        meters[i][0], meters[i][1], 
+                        meters[j][0], meters[j][1]
+                    )
+                    if dist <= self.coverage_radius:
+                        covered.add(j)
+                
+                # If this location covers more uncovered meters, select it
+                if len(covered) > len(best_coverage):
+                    best_loc = i
+                    best_coverage = covered
+            
+            # Add the best location as a gateway
+            if best_loc is not None:
+                gateways.append((meters[best_loc][0], meters[best_loc][1]))
+                uncovered_meters -= best_coverage
+            else:
+                # If we couldn't find a good location, add one for each remaining meter
+                for i in uncovered_meters:
+                    gateways.append((meters[i][0], meters[i][1]))
+                break
+        
+        # Create dataframe of gateway locations
+        self.gateways_df = pd.DataFrame(gateways, columns=['longitude', 'latitude'])
+        self.gateways_df['gateway_id'] = self.gateways_df.index
+        
+        # Assign meters to gateways
+        self._assign_meters_to_gateways()
+        
+        return self.gateways_df
+    
+    def _validate_and_adjust_coverage(self):
+        """Check if all meters are covered and adjust gateway locations if needed."""
+        # For each meter, check if it's within range of its assigned gateway
+        meters_covered = []
+        
+        for _, meter in self.meters_df.iterrows():
+            gateway = self.gateways_df.loc[self.gateways_df['gateway_id'] == meter['gateway_id']].iloc[0]
+            
+            dist = self.haversine_distance(
+                meter['longitude'], meter['latitude'],
+                gateway['longitude'], gateway['latitude']
+            )
+            
+            meters_covered.append(dist <= self.coverage_radius)
+        
+        coverage_pct = sum(meters_covered) / len(meters_covered) * 100
+        print(f"Coverage: {coverage_pct:.2f}% of meters are within range of their gateway")
+        
+        # If coverage is less than 100%, add more gateways
+        if coverage_pct < 100:
+            uncovered = self.meters_df[~np.array(meters_covered)]
+            print(f"Adding gateways for {len(uncovered)} uncovered meters")
+            
+            # Add a gateway for each cluster of uncovered meters
+            if len(uncovered) > 1:
+                # Use hierarchical clustering to group nearby uncovered meters
+                from sklearn.cluster import AgglomerativeClustering
+                
+                # Estimate additional clusters needed
+                n_extra = min(len(uncovered), len(uncovered) // self.meters_per_gateway + 1)
+                
+                clustering = AgglomerativeClustering(n_clusters=n_extra)
+                uncovered['extra_cluster'] = clustering.fit_predict(
+                    uncovered[['longitude', 'latitude']]
+                )
+                
+                # Add a gateway for each cluster
+                for cluster_id in uncovered['extra_cluster'].unique():
+                    cluster_meters = uncovered[uncovered['extra_cluster'] == cluster_id]
+                    center = cluster_meters[['longitude', 'latitude']].mean()
+                    
+                    new_id = len(self.gateways_df)
+                    self.gateways_df.loc[new_id] = [center['longitude'], center['latitude'], new_id]
+                    
+                    # Update meter assignments
+                    for idx in cluster_meters.index:
+                        self.meters_df.loc[idx, 'gateway_id'] = new_id
+            else:
+                # Add a gateway at the uncovered meter location
+                for _, meter in uncovered.iterrows():
+                    new_id = len(self.gateways_df)
+                    self.gateways_df.loc[new_id] = [meter['longitude'], meter['latitude'], new_id]
+                    self.meters_df.loc[meter.name, 'gateway_id'] = new_id
+    
+    def _assign_meters_to_gateways(self):
+        """Assign each meter to the nearest gateway."""
+        gateway_assignments = []
+        
+        for _, meter in self.meters_df.iterrows():
+            min_dist = float('inf')
+            best_gateway = None
+            
+            for _, gateway in self.gateways_df.iterrows():
+                dist = self.haversine_distance(
+                    meter['longitude'], meter['latitude'],
+                    gateway['longitude'], gateway['latitude']
+                )
+                
+                if dist < min_dist:
+                    min_dist = dist
+                    best_gateway = gateway['gateway_id']
+            
+            gateway_assignments.append(best_gateway)
+        
+        self.meters_df['gateway_id'] = gateway_assignments
+        
+        # Count meters per gateway
+        gateway_counts = self.meters_df['gateway_id'].value_counts().to_dict()
+        self.gateways_df['meter_count'] = self.gateways_df['gateway_id'].map(gateway_counts).fillna(0)
+    
+    def plot_map(self, html_output='rf_planning_map.html'):
+        """
+        Generate an interactive map showing meters and gateways.
+        
+        Args:
+            html_output: Path to save the HTML map
+            
+        Returns:
+            Folium map object
+        """
+        if self.meters_df is None or self.gateways_df is None:
+            raise ValueError("Both meter data and gateway planning must be completed first")
+        
+        # Calculate center of map
+        center_lat = self.meters_df['latitude'].mean()
+        center_lon = self.meters_df['longitude'].mean()
+        
+        # Create map
+        m = folium.Map(location=[center_lat, center_lon], zoom_start=14)
+        
+        # Add meters with cluster capability
+        meter_cluster = MarkerCluster(name="Meters").add_to(m)
+        
+        # Add meters to map with colors based on gateway assignment
+        gateway_colors = plt.cm.rainbow(np.linspace(0, 1, len(self.gateways_df)))
+        color_map = {}
+        
+        for i, gateway_id in enumerate(self.gateways_df['gateway_id']):
+            hex_color = '#{:02x}{:02x}{:02x}'.format(
+                int(gateway_colors[i][0]*255),
+                int(gateway_colors[i][1]*255),
+                int(gateway_colors[i][2]*255)
+            )
+            color_map[gateway_id] = hex_color
+        
+        for _, meter in self.meters_df.iterrows():
+            folium.CircleMarker(
+                location=[meter['latitude'], meter['longitude']],
+                radius=3,
+                color=color_map.get(meter['gateway_id'], 'gray'),
+                fill=True,
+                fill_opacity=0.7,
+                popup=f"Meter (Gateway {meter['gateway_id']})"
+            ).add_to(meter_cluster)
+        
+        # Add gateways to map with coverage circles
+        for _, gateway in self.gateways_df.iterrows():
+            # Gateway marker
+            folium.Marker(
+                location=[gateway['latitude'], gateway['longitude']],
+                icon=folium.Icon(color='red', icon='antenna', prefix='fa'),
+                popup=f"Gateway {gateway['gateway_id']} (Meters: {gateway.get('meter_count', 'N/A')})"
+            ).add_to(m)
+            
+            # Coverage circle
+            folium.Circle(
+                location=[gateway['latitude'], gateway['longitude']],
+                radius=self.coverage_radius,  # In meters
+                color=color_map.get(gateway['gateway_id'], 'red'),
+                fill=True,
+                fill_opacity=0.1
+            ).add_to(m)
+        
+        # Add layer control
+        folium.LayerControl().add_to(m)
+        
+        # Save to HTML
+        m.save(html_output)
+        print(f"Map saved to {html_output}")
+        
+        return m
+    
+    def export_results(self, output_file='rf_planning_results.csv'):
+        """Export gateway planning results to CSV."""
+        if self.gateways_df is None:
+            raise ValueError("Gateway planning must be completed first")
+            
+        self.gateways_df.to_csv(output_file, index=False)
+        print(f"Results exported to {output_file}")
+        
+        return self.gateways_df
+
+
+# Example usage
+if __name__ == "__main__":
+    # Create sample data (replace with your actual data loading)
+    import random
+    
+    # Generate random meter locations in a small area
+    n_meters = 250
+    center_lat, center_lon = 40.7128, -74.0060  # New York City center
+    
+    # Generate meters within roughly 1km of the center
+    random.seed(42)
+    meters = []
+    for _ in range(n_meters):
+        # ~0.01 degree is roughly 1km at this latitude
+        lat = center_lat + (random.random() - 0.5) * 0.02
+        lon = center_lon + (random.random() - 0.5) * 0.02
+        meters.append([lat, lon])
+        
+    meters_df = pd.DataFrame(meters, columns=['latitude', 'longitude'])
+    
+    # Initialize planner
+    planner = RFGatewayPlanner(coverage_radius=100, meters_per_gateway=120)
+    
+    # Load data
+    planner.load_meter_data(data=meters_df)
+    
+    # Plan gateways
+    gateways = planner.plan_gateways(method='kmeans')
+    print(f"Planned {len(gateways)} gateways")
+    
+    # Generate map
+    planner.plot_map('rf_planning_example.html')
+    
+    # Export results
+    planner.export_results()
