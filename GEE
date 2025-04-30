@@ -1,0 +1,40 @@
+//naryampur
+var roi = /* color: #d63000 */ee.Geometry.Polygon(
+        [[[81.21471712278784594,19.73847886181382094],[81.26129895778846901,19.74538576690432023],[81.27237966486681842,19.68714619205227123],[81.22406427504108706,19.67993242541722054],[81.21471712278784594,19.73847886181382094]]], null, false);
+
+//sample 
+// Download Microsoft Building Footprint Data using Google Earth Engine (GEE)
+
+//1. Import Microsoft Building Footprint Data
+var roi = ee.Geometry.Polygon(
+  [[[81.21471712278784594,19.73847886181382094],[81.26129895778846901,19.74538576690432023],[81.27237966486681842,19.68714619205227123],[81.22406427504108706,19.67993242541722054],[81.21471712278784594,19.73847886181382094]]]);
+
+var global = ee.data.listAssets('projects/sat-io/open-datasets/MSBuildings');
+print('Assests in MS Global Buildings Footprint Folder', global['assets']); // the code is printing out the list of assets within the 'MS Global Buildings Footprint' 
+print(ee.FeatureCollection('projects/sat-io/open-datasets/MSBuildings/India').size())
+
+//2. Microsoft Building Folder. Check it for Specific Country
+var ee_folder = ee.data.listAssets('projects/sat-io/open-datasets/MSBuildings');
+print(ee_folder)
+
+//3. Building Feature Collection for Microsoft and Google
+var ms_building_India = ee.FeatureCollection('projects/sat-io/open-datasets/MSBuildings/India');
+
+//4. Clip Building with ROI
+var ms_footprint_clip = ms_building_India.filterBounds(roi)
+print((ms_footprint_clip).size());
+
+//5. Add Building to the Map
+Map.addLayer(ms_footprint_clip, {color: 'red'}, 'Microsoft Buildings Footprint');
+
+//6. Set Map Center and Satellite image
+Map.centerObject(roi, 17);
+Map.setOptions("Satellite");
+
+//7. Export Data to Google Drive in GEOJSON format
+Export.table.toDrive({
+collection: ms_footprint_clip,
+description: 'microsoft_clip_roi',
+folder: 'GEE_ms_Footprint',
+fileFormat:'GeoJSON',
+});
