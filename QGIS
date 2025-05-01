@@ -1,0 +1,29 @@
+QGIS version
+3.42.2-Münster
+QGIS code revision
+402273f8c2
+
+Google Open Buildings : 
+step 1 : Download the building footprints in csv from https://sites.research.google/gr/open-buildings/#open-buildings-download
+step2: open QGIS>LAYER>ADD LAYER> ADD DELIMITED LAYER
+step3: Upload csv file and keep geometry as polygon 
+step4: wait till it gets uploaded 
+step5: once completed upload the saved polygon from google earth pro 
+step6: go to vector>geoprocessing tools>clip
+step7: upload the two files and clip and wait 
+step7: save the clipped file as csv and upload it on google earth 
+
+note: google open buildings has heavy data in it so the system takes a lot of time.
+
+MapFlow.ai
+step1: upload the polygon you desire to get building footprints of 
+step2: process it
+step3: wait till it gives you the desired result 
+step4: go to the original website and login 
+step5: go to default and click on three dots option on the project top right 
+step6: download option is disabled so right click : download .geojson 
+step7: inspect<double click download link and copy it
+step8:paste it new window and download it
+step9:once completed upload it on qgis
+
+note: mapflow is quick but it can't provide output for very large areas.
