@@ -1,0 +1,81 @@
+🎯 GOAL:
+From a layer of building centroids, automatically group them (~100 per group), place one gateway per group, and symbolize it.
+
+✅ STEP-BY-STEP IN QGIS
+Step 1: Prepare Your Data
+You should have a point layer of building centroids (let's say it's named centroids).
+
+Make sure your project CRS is projected (meters) — e.g., EPSG:32643 (UTM zone for India).
+
+Step 2: Install Plugins (if needed)
+Open Plugins → Manage and Install Plugins
+
+Install:
+
+MMQGIS
+
+DBSCAN Clustering (optional)
+
+Step 3: Cluster Points (~100 Centroids Each)
+Option A: Using MMQGIS
+Go to MMQGIS → Create → Hub Distance Clusters
+
+Choose:
+
+Layer: centroids
+
+Hub Distance: Start with 100 meters (adjust until you get clusters of ~100 points)
+
+Run the tool — it will create a cluster field (CLUSTER_ID) in the attribute table.
+
+Option B: Using DBSCAN Plugin
+Processing → Toolbox → DBSCAN clustering
+
+Choose:
+
+Input layer: centroids
+
+Epsilon (max distance): e.g., 80
+
+Minimum points: 100
+
+Output will have a cluster ID field.
+
+Step 4: Compute Cluster Centers (Gateways)
+Go to Processing Toolbox → Mean coordinate(s)
+
+Input layer: centroids
+
+Group by field: CLUSTER_ID
+
+This creates a new point layer, where each point is the center of a cluster (i.e., your gateway!)
+
+Step 5: Buffer Gateways
+Processing Toolbox → Buffer
+
+Input layer: your gateway layer
+
+Distance: 100 meters (or more depending on spacing)
+
+Result: Gateway coverage areas (circles).
+
+Step 6: Symbolize Gateways
+Right-click your gateway layer → Properties → Symbology
+
+Change symbol to:
+
+Marker symbol (e.g., WiFi icon or antenna from SVGs)
+
+Choose color (e.g., red or blue)
+
+Increase size
+
+You can also add labels like "Gateway 1", "Gateway 2", etc.
+
+✅ Final Output
+A layer of gateways centered on building centroid clusters
+
+Buffers showing their coverage
+
+Clearly symbolized for easy map reading
+
