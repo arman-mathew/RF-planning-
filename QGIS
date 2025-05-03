@@ -27,3 +27,154 @@ step8:paste it new window and download it
 step9:once completed upload it on qgis
 
 note: mapflow is quick but it can't provide output for very large areas.
+
+FOR AUTOMATIC GATEWAY PLANNING IN QGIS 
+it is possible through python coding in python console of QGIS.
+note: coding isn't perfect but can be improved and can be customized on the basis of the need. 
+however their can be made some manual changes in the output.\
+step1: upload the electric meters csv file in QGIS 
+step2 : upload the code and run 
+python code for automatic generation of gateway for electric meters :
+from qgis.core import (
+    QgsProject,
+    QgsFeature,
+    QgsGeometry,
+    QgsPointXY,
+    QgsVectorLayer,
+    QgsField,
+    QgsFields,
+    QgsFeatureSink,
+    QgsWkbTypes
+)
+from PyQt5.QtCore import QVariant
+
+def create_gateway_centroids(input_layer, group_size=100):
+    # Collect all points from the input layer
+    features = list(input_layer.getFeatures())
+    total = len(features)
+
+    if total == 0:
+        print("No points found in the input layer.")
+        return
+
+    # Group points into sets of `group_size` (or group_size to group_size+20)
+    groups = [features[i:i + group_size] for i in range(0, total, group_size)]
+
+    # Prepare the output layer
+    output_layer = QgsVectorLayer("Point?crs=" + input_layer.crs().authid(), "Gateways", "memory")
+    pr = output_layer.dataProvider()
+    pr.addAttributes([QgsField("Gateway_ID", QVariant.Int), QgsField("Group_Size", QVariant.Int)])
+    output_layer.updateFields()
+
+    for idx, group in enumerate(groups):
+        points = [feat.geometry().asPoint() for feat in group if feat.geometry().isMultipart() is False]
+        
+        if len(points) < 5:
+            continue  # Skip small groups
+
+        # Compute centroid
+        multi_point = QgsGeometry.fromMultiPointXY([QgsPointXY(p) for p in points])
+        centroid = multi_point.centroid()
+
+        # Create new feature
+        feat = QgsFeature()
+        feat.setGeometry(centroid)
+        feat.setAttributes([idx + 1, len(points)])
+        pr.addFeature(feat)
+
+    # Add layer to project
+    QgsProject.instance().addMapLayer(output_layer)
+    print(f"Created {len(groups)} gateway points.")
+
+
+//then 
+layer = iface.activeLayer()
+create_gateway_centroids(layer, group_size=100)
+
+//or
+from qgis.core import (
+    QgsProject, QgsSpatialIndex, QgsFeature, QgsGeometry, QgsPointXY,
+    QgsVectorLayer, QgsField, QgsFields, QgsWkbTypes
+)
+from qgis.PyQt.QtCore import QVariant
+
+# 1. Load the input meter layer (make sure it is projected for meter distances)
+meter_layer = QgsProject.instance().mapLayersByName('InputLayerName')[0]
+crs = meter_layer.crs().authid()
+
+# 2. Build spatial index of all meter points
+index = QgsSpatialIndex()
+unclustered_ids = set()
+for feat in meter_layer.getFeatures():
+    index.insertFeature(feat)
+    unclustered_ids.add(feat.id())
+
+clusters = []
+cluster_id = 1
+
+# 3. Iteratively form clusters of 100 points
+while unclustered_ids:
+    seed_id = next(iter(unclustered_ids))
+    seed_feat = meter_layer.getFeature(seed_id)
+    seed_point = seed_feat.geometry().asPoint()
+    
+    # find nearest 100 neighbors to seed (including itself)
+    neighbor_ids = index.nearestNeighbor(QgsPointXY(seed_point), 100)
+    # filter to those not yet clustered
+    neighbor_ids = [fid for fid in neighbor_ids if fid in unclustered_ids]
+    if not neighbor_ids:
+        break
+    
+    # (Optional) enforce max distance, e.g. drop any beyond 150 m from seed
+    max_dist = 150  # meters
+    kept_ids = []
+    for fid in neighbor_ids:
+        geom = meter_layer.getFeature(fid).geometry()
+        if seed_point.distance(geom.asPoint()) <= max_dist:
+            kept_ids.append(fid)
+        # stop once we have 100 after filtering
+        if len(kept_ids) >= 100:
+            break
+    
+    # If we enforce radius, we might get fewer than 100 points; otherwise just take 100
+    if kept_ids:
+        cluster_points = kept_ids
+    else:
+        cluster_points = neighbor_ids[:100]
+    
+    # Remove these points from index and from unclustered set
+    for fid in cluster_points:
+        feat = meter_layer.getFeature(fid)
+        index.deleteFeature(feat)
+        unclustered_ids.remove(fid)
+    clusters.append((cluster_id, cluster_points))
+    cluster_id += 1
+
+# 4. Create gateway layer (memory layer) to store centroids
+fields = QgsFields()
+fields.append(QgsField("cluster_id", QVariant.Int))
+
+gateway_layer = QgsVectorLayer(f'Point?crs={crs}', 'Gateways', 'memory')
+provider = gateway_layer.dataProvider()
+provider.addAttributes(fields)
+gateway_layer.updateFields()
+
+for cid, pts in clusters:
+    # compute centroid of cluster by averaging coordinates
+    xs = []; ys = []
+    for fid in pts:
+        point = meter_layer.getFeature(fid).geometry().asPoint()
+        xs.append(point.x()); ys.append(point.y())
+    centroid_x = sum(xs) / len(xs)
+    centroid_y = sum(ys) / len(ys)
+    centroid_geom = QgsGeometry.fromPointXY(QgsPointXY(centroid_x, centroid_y))
+    
+    # add feature to gateway layer
+    gateway_feat = QgsFeature()
+    gateway_feat.setGeometry(centroid_geom)
+    gateway_feat.setAttributes([cid])
+    provider.addFeature(gateway_feat)
+
+# 5. Add the new gateway layer to the project
+QgsProject.instance().addMapLayer(gateway_layer)
+
