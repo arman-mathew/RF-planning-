@@ -1,6 +1,16 @@
 how to auto generate Gatewyas for electricity meters in Google earth Pro ?
 Note: you need 80% correct CI data of electricity meters 
 Note:  Considering the meter data is extracted from google building footprints data 
+
+// required packages 
+pip install pandas simplekml geopy numpy
+pip install geopy
+pip install pandas scikit-learn simplekml
+pip install geopandas shapely
+pip install pandas scikit-learn simplekml
+pip install pandas geopy simplekml scikit-learn
+
+//code 1 
 import pandas as pd
 from sklearn.cluster import KMeans
 import simplekml
@@ -63,4 +73,111 @@ upload_button = tk.Button(root, text="Upload CSV File", command=upload_file)
 upload_button.pack(pady=20)
 
 # Start the Tkinter event loop
+root.mainloop()
+
+
+//
+
+how to generate gateways with circle radius. 
+assumption 1 : maximum covering radius of gateways are 300 meters. the value should not exist 300 meters.
+assumption 2 : all the gateways should cover 200 meters ( generally it's 120 meters but due to the imperfect ci data and google footprints. however further changes in the code can be made 
+
+//code 2 :
+import pandas as pd
+import simplekml
+import math
+import tkinter as tk
+from tkinter import filedialog, messagebox
+import geopy.distance
+import numpy as np
+
+def cluster_within_radius(df, max_radius_m=300):
+    df = df.reset_index(drop=True)
+    df['Cluster'] = -1
+    cluster_id = 0
+
+    unclustered = set(df.index)
+
+    while unclustered:
+        center_idx = unclustered.pop()
+        center_point = (df.loc[center_idx, 'LATITUDE'], df.loc[center_idx, 'LONGITUDE'])
+        df.at[center_idx, 'Cluster'] = cluster_id
+
+        for idx in list(unclustered):
+            point = (df.loc[idx, 'LATITUDE'], df.loc[idx, 'LONGITUDE'])
+            dist = geopy.distance.geodesic(center_point, point).meters
+            if dist <= max_radius_m:
+                df.at[idx, 'Cluster'] = cluster_id
+                unclustered.remove(idx)
+
+        cluster_id += 1
+    return df
+
+def create_circle_coords(center, radius_m, num_points=36):
+    circle_coords = []
+    for angle in np.linspace(0, 360, num_points, endpoint=False):
+        dest = geopy.distance.distance(meters=radius_m).destination(center, angle)
+        circle_coords.append((dest.longitude, dest.latitude))
+    circle_coords.append(circle_coords[0])
+    return circle_coords
+
+def generate_gateways(csv_file):
+    df = pd.read_csv(csv_file)
+    df = df.dropna(subset=['LATITUDE', 'LONGITUDE'])
+
+    df = cluster_within_radius(df, max_radius_m=300)
+
+    # Calculate gateway positions
+    gateway_locations = df.groupby('Cluster')[['LATITUDE', 'LONGITUDE']].mean().reset_index()
+
+    kml_points = simplekml.Kml()
+    kml_circles = simplekml.Kml()
+
+    for i, row in gateway_locations.iterrows():
+        cluster_id = row['Cluster']
+        lat, lon = row['LATITUDE'], row['LONGITUDE']
+        center = (lat, lon)
+
+        # Add gateway marker
+        pnt = kml_points.newpoint(name=f"Gateway {i+1}", coords=[(lon, lat)])
+        pnt.style.iconstyle.color = simplekml.Color.yellow
+        pnt.style.iconstyle.scale = 1.5
+
+        # Find max distance to any point in the cluster (bounded by 300m)
+        meters = df[df['Cluster'] == cluster_id]
+        max_dist = 0
+        for _, meter in meters.iterrows():
+            dist = geopy.distance.geodesic(center, (meter['LATITUDE'], meter['LONGITUDE'])).meters
+            max_dist = max(max_dist, dist)
+        max_dist = min(max_dist, 300)
+
+        # Add radius circle for this gateway
+        circle_coords = create_circle_coords(center, max_dist)
+        pol = kml_circles.newpolygon(name=f"Gateway {i+1} Coverage ({int(max_dist)}m)", outerboundaryis=circle_coords)
+        pol.style.polystyle.color = simplekml.Color.changealphaint(70, simplekml.Color.yellow)
+        pol.style.linestyle.width = 2
+        pol.style.linestyle.color = simplekml.Color.red
+
+    kml_points.save("output_gateway_map.kml")
+    kml_circles.save("gateway_radius_circles.kml")
+    return "KML files created:\n- output_gateway_map.kml\n- gateway_radius_circles.kml"
+
+def upload_file():
+    file_path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv")])
+    if file_path:
+        try:
+            result = generate_gateways(file_path)
+            messagebox.showinfo("Success", result)
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred: {e}")
+    else:
+        messagebox.showwarning("No file", "Please select a CSV file.")
+
+# GUI
+root = tk.Tk()
+root.title("Gateway Generator Tool")
+
+upload_button = tk.Button(root, text="Upload CSV File", command=upload_file)
+upload_button.pack(pady=20)
+
 root.mainloop()
