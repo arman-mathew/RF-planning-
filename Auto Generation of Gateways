@@ -1,0 +1,66 @@
+how to auto generate Gatewyas for electricity meters in Google earth Pro ?
+Note: you need 80% correct CI data of electricity meters 
+Note:  Considering the meter data is extracted from google building footprints data 
+import pandas as pd
+from sklearn.cluster import KMeans
+import simplekml
+import math
+import tkinter as tk
+from tkinter import filedialog, messagebox
+
+def generate_gateways(csv_file):
+    # Read the CSV file with meter coordinates
+    df = pd.read_csv(csv_file)
+
+    # Remove rows with missing coordinates
+    df = df.dropna(subset=['LATITUDE', 'LONGITUDE'])
+
+    # Set the number of meters per gateway (e.g., 200)
+    meters_per_gateway = 200
+    total_meters = len(df)
+
+    # Calculate the number of gateways
+    num_gateways = math.ceil(total_meters / meters_per_gateway)
+
+    # Apply KMeans clustering to create clusters
+    kmeans = KMeans(n_clusters=num_gateways, random_state=0)
+    df['Cluster'] = kmeans.fit_predict(df[['LATITUDE', 'LONGITUDE']])
+
+    # Create a new KML file
+    kml = simplekml.Kml()
+
+    # Find the average latitude and longitude for each cluster (gateway location)
+    gateway_locations = df.groupby('Cluster')[['LATITUDE', 'LONGITUDE']].mean().reset_index()
+
+    # Add only gateway locations to the KML
+    for i, row in gateway_locations.iterrows():
+        pnt = kml.newpoint(name=f"Gateway {i+1}", coords=[(row['LONGITUDE'], row['LATITUDE'])])
+        pnt.style.iconstyle.color = simplekml.Color.yellow  # Yellow marker
+        pnt.style.iconstyle.scale = 1.5  # Enlarged marker
+
+    # Save the KML file with only gateway points
+    kml.save("output_gateway_map.kml")
+    return "KML file created: output_gateway_map.kml"
+
+def upload_file():
+    # Open a file dialog to select the CSV file
+    file_path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv")])
+    if file_path:
+        try:
+            result = generate_gateways(file_path)
+            messagebox.showinfo("Success", result)
+        except Exception as e:
+            messagebox.showerror("Error", f"An error occurred: {e}")
+    else:
+        messagebox.showwarning("No file", "Please select a CSV file.")
+
+# Create the GUI application
+root = tk.Tk()
+root.title("Gateway Generator Tool")
+
+# Add a button to upload a file
+upload_button = tk.Button(root, text="Upload CSV File", command=upload_file)
+upload_button.pack(pady=20)
+
+# Start the Tkinter event loop
+root.mainloop()
