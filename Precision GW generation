@@ -1,0 +1,436 @@
+download lib: 
+pip install osmnx geopandas shapely simplekml geopy pandas numpy
+pip install osmnx geopandas shapely pandas numpy simplekml geopy
+
+osmnx: A library for working with OpenStreetMap data.
+geopandas: A library for working with geospatial data in Python.
+shapely: A library for geometric operations.
+pandas: A library for data manipulation and analysis.
+numpy: A library for numerical computations.
+simplekml: A library for creating KML files.
+geopy: A library for geocoding and calculating distances.
+
+code 1 : 
+import pandas as pd
+import simplekml
+import math
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+import geopy.distance
+import numpy as np
+import os
+
+def cluster_within_radius(df, max_radius_m=300):
+    df = df.reset_index(drop=True)
+    df['Cluster'] = -1
+    cluster_id = 0
+    unclustered = set(df.index)
+
+    while unclustered:
+        center_idx = unclustered.pop()
+        center_point = (df.loc[center_idx, 'LATITUDE'], df.loc[center_idx, 'LONGITUDE'])
+        df.at[center_idx, 'Cluster'] = cluster_id
+
+        for idx in list(unclustered):
+            point = (df.loc[idx, 'LATITUDE'], df.loc[idx, 'LONGITUDE'])
+            dist = geopy.distance.geodesic(center_point, point).meters
+            if dist <= max_radius_m:
+                df.at[idx, 'Cluster'] = cluster_id
+                unclustered.remove(idx)
+        cluster_id += 1
+    return df
+
+def create_circle_coords(center, radius_m, num_points=36):
+    circle_coords = []
+    for angle in np.linspace(0, 360, num_points, endpoint=False):
+        dest = geopy.distance.distance(meters=radius_m).destination(center, angle)
+        circle_coords.append((dest.longitude, dest.latitude))
+    circle_coords.append(circle_coords[0])
+    return circle_coords
+
+def generate_gateways(csv_file, output_dir, radius_val):
+    df = pd.read_csv(csv_file)
+    df = df.dropna(subset=['LATITUDE', 'LONGITUDE'])
+    df = cluster_within_radius(df, max_radius_m=radius_val)
+    gateway_locations = df.groupby('Cluster')[['LATITUDE', 'LONGITUDE']].mean().reset_index()
+
+    kml_points = simplekml.Kml()
+    kml_circles = simplekml.Kml()
+
+    for i, row in gateway_locations.iterrows():
+        cluster_id = row['Cluster']
+        lat, lon = row['LATITUDE'], row['LONGITUDE']
+        center = (lat, lon)
+
+        pnt = kml_points.newpoint(name=f"Gateway {i+1}", coords=[(lon, lat)])
+        pnt.style.iconstyle.color = simplekml.Color.yellow
+        pnt.style.iconstyle.scale = 1.5
+
+        meters = df[df['Cluster'] == cluster_id]
+        max_dist = 0
+        for _, meter in meters.iterrows():
+            dist = geopy.distance.geodesic(center, (meter['LATITUDE'], meter['LONGITUDE'])).meters
+            max_dist = max(max_dist, dist)
+        max_dist = min(max_dist, radius_val)
+
+        circle_coords = create_circle_coords(center, max_dist)
+        pol = kml_circles.newpolygon(name=f"Gateway {i+1} Coverage ({int(max_dist)}m)", outerboundaryis=circle_coords)
+        pol.style.polystyle.color = simplekml.Color.changealphaint(70, simplekml.Color.yellow)
+        pol.style.linestyle.width = 2
+        pol.style.linestyle.color = simplekml.Color.red
+
+    # Save files
+    out1 = os.path.join(output_dir, "output_gateway_map.kml")
+    out2 = os.path.join(output_dir, "gateway_radius_circles.kml")
+    kml_points.save(out1)
+    kml_circles.save(out2)
+    return f"KML files created:\n- {out1}\n- {out2}\nClusters Formed: {len(gateway_locations)}"
+
+# GUI
+def upload_file():
+    file_path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv")])
+    output_dir = filedialog.askdirectory(title="Select Output Folder")
+    if not file_path or not output_dir:
+        messagebox.showwarning("Missing input", "Please select both CSV and Output Folder.")
+        return
+    try:
+        radius_val = int(radius_entry.get())
+        result = generate_gateways(file_path, output_dir, radius_val)
+        messagebox.showinfo("Success", result)
+    except Exception as e:
+        messagebox.showerror("Error", f"An error occurred:\n{e}")
+
+root = tk.Tk()
+root.title("📍 Gateway Generator Tool")
+root.geometry("400x250")
+
+frame = ttk.Frame(root, padding="20")
+frame.pack(fill=tk.BOTH, expand=True)
+
+title = ttk.Label(frame, text="Gateway Generator", font=("Arial", 16))
+title.pack(pady=10)
+
+radius_label = ttk.Label(frame, text="Enter Radius (in meters):")
+radius_label.pack()
+
+radius_entry = ttk.Entry(frame)
+radius_entry.insert(0, "300")
+radius_entry.pack(pady=5)
+
+upload_button = ttk.Button(frame, text="📤 Upload CSV and Generate", command=upload_file)
+upload_button.pack(pady=20)
+
+root.mainloop()
+
+
+// OPTIMIZED GATEWAYS 
+code 2: import pandas as pd
+import simplekml
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+import geopy.distance
+import numpy as np
+import os
+import osmnx as ox
+import geopandas as gpd
+from shapely.geometry import Point
+
+# ---------- Helper Functions ---------- #
+
+def cluster_within_radius(df, max_radius_m=300):
+    df = df.reset_index(drop=True)
+    df['Cluster'] = -1
+    cluster_id = 0
+    unclustered = set(df.index)
+
+    while unclustered:
+        center_idx = unclustered.pop()
+        center_point = (df.loc[center_idx, 'LATITUDE'], df.loc[center_idx, 'LONGITUDE'])
+        df.at[center_idx, 'Cluster'] = cluster_id
+
+        for idx in list(unclustered):
+            point = (df.loc[idx, 'LATITUDE'], df.loc[idx, 'LONGITUDE'])
+            dist = geopy.distance.geodesic(center_point, point).meters
+            if dist <= max_radius_m:
+                df.at[idx, 'Cluster'] = cluster_id
+                unclustered.remove(idx)
+        cluster_id += 1
+    return df
+
+def create_circle_coords(center, radius_m, num_points=36):
+    circle_coords = []
+    for angle in np.linspace(0, 360, num_points, endpoint=False):
+        dest = geopy.distance.distance(meters=radius_m).destination(center, angle)
+        circle_coords.append((dest.longitude, dest.latitude))
+    circle_coords.append(circle_coords[0])
+    return circle_coords
+
+def snap_to_road(lat, lon, road_gdf):
+    pt = Point(lon, lat)
+    pt_proj = gpd.GeoSeries([pt], crs="EPSG:4326").to_crs(epsg=32643)[0]
+    road_proj = road_gdf.to_crs(epsg=32643)
+
+    road_proj['dist'] = road_proj.geometry.distance(pt_proj)
+    nearest = road_proj.loc[road_proj['dist'].idxmin()]
+    snapped_pt_proj = nearest.geometry.interpolate(nearest.geometry.project(pt_proj))
+    snapped_pt = gpd.GeoSeries([snapped_pt_proj], crs="EPSG:32643").to_crs(epsg=4326)[0]
+    return snapped_pt.y, snapped_pt.x  # lat, lon
+
+# ---------- Main Processing Function ---------- #
+
+def generate_gateways(csv_file, output_dir, radius_val):
+    df = pd.read_csv(csv_file)
+    df = df.dropna(subset=['LATITUDE', 'LONGITUDE'])
+    df = cluster_within_radius(df, max_radius_m=radius_val)
+    gateway_locations = df.groupby('Cluster')[['LATITUDE', 'LONGITUDE']].mean().reset_index()
+
+    # Get roads from OSM
+    center_lat = df['LATITUDE'].mean()
+    center_lon = df['LONGITUDE'].mean()
+    G = ox.graph_from_point((center_lat, center_lon), dist=2000, network_type='drive')
+    road_gdf = ox.graph_to_gdfs(G, nodes=False)
+
+    kml_points = simplekml.Kml()
+    kml_circles = simplekml.Kml()
+
+    for i, row in gateway_locations.iterrows():
+        cluster_id = row['Cluster']
+        lat, lon = row['LATITUDE'], row['LONGITUDE']
+        snapped_lat, snapped_lon = snap_to_road(lat, lon, road_gdf)
+        center = (snapped_lat, snapped_lon)
+
+        # Add gateway point
+        pnt = kml_points.newpoint(name=f"Gateway {i+1}", coords=[(snapped_lon, snapped_lat)])
+        pnt.style.iconstyle.color = simplekml.Color.yellow
+        pnt.style.iconstyle.scale = 1.5
+
+        # Calculate max radius
+        meters = df[df['Cluster'] == cluster_id]
+        max_dist = max([
+            geopy.distance.geodesic(center, (m['LATITUDE'], m['LONGITUDE'])).meters
+            for _, m in meters.iterrows()
+        ])
+        max_dist = min(max_dist, radius_val)
+
+        # Draw coverage circle
+        circle_coords = create_circle_coords(center, max_dist)
+        pol = kml_circles.newpolygon(name=f"Gateway {i+1} Coverage ({int(max_dist)}m)", outerboundaryis=circle_coords)
+        pol.style.polystyle.color = simplekml.Color.changealphaint(70, simplekml.Color.yellow)
+        pol.style.linestyle.width = 2
+        pol.style.linestyle.color = simplekml.Color.red
+
+    out1 = os.path.join(output_dir, "output_gateway_map.kml")
+    out2 = os.path.join(output_dir, "gateway_radius_circles.kml")
+    kml_points.save(out1)
+    kml_circles.save(out2)
+    return f"KML files created:\n- {out1}\n- {out2}\nClusters Formed: {len(gateway_locations)}"
+
+# ---------- GUI ---------- #
+
+def upload_file():
+    file_path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv")])
+    output_dir = filedialog.askdirectory(title="Select Output Folder")
+    if not file_path or not output_dir:
+        messagebox.showwarning("Missing input", "Please select both CSV and Output Folder.")
+        return
+    try:
+        radius_val = int(radius_entry.get())
+        result = generate_gateways(file_path, output_dir, radius_val)
+        messagebox.showinfo("Success", result)
+    except Exception as e:
+        messagebox.showerror("Error", f"An error occurred:\n{e}")
+
+root = tk.Tk()
+root.title("📍 Gateway Generator Tool (Snaps to Roads)")
+root.geometry("400x250")
+
+frame = ttk.Frame(root, padding="20")
+frame.pack(fill=tk.BOTH, expand=True)
+
+title = ttk.Label(frame, text="Gateway Generator", font=("Arial", 16))
+title.pack(pady=10)
+
+radius_label = ttk.Label(frame, text="Enter Radius (in meters):")
+radius_label.pack()
+
+radius_entry = ttk.Entry(frame)
+radius_entry.insert(0, "300")
+radius_entry.pack(pady=5)
+
+upload_button = ttk.Button(frame, text="📤 Upload CSV and Generate", command=upload_file)
+upload_button.pack(pady=20)
+
+root.mainloop()
+
+
+
+
+// CODE 3 : 
+import pandas as pd
+import simplekml
+import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
+import geopy.distance
+import numpy as np
+import os
+import osmnx as ox
+import geopandas as gpd
+from shapely.geometry import Point
+
+# ---------- Helper Functions ---------- #
+
+def cluster_within_radius(df, max_radius_m=300, min_points=130, max_points=200):
+    df = df.reset_index(drop=True)
+    df['Cluster'] = -1
+    cluster_id = 0
+    unclustered = set(df.index)
+    skipped = 0
+    fail_limit = 500  # Fail-safe: stop if this many points fail to cluster
+
+    print("⚙️ Clustering started...")
+    total_points = len(df)
+
+    while unclustered:
+        center_idx = unclustered.pop()
+        center_point = (df.loc[center_idx, 'LATITUDE'], df.loc[center_idx, 'LONGITUDE'])
+        cluster_members = [center_idx]
+
+        # Find neighbors within 300m
+        distances = []
+        for idx in list(unclustered):
+            point = (df.loc[idx, 'LATITUDE'], df.loc[idx, 'LONGITUDE'])
+            dist = geopy.distance.geodesic(center_point, point).meters
+            if dist <= max_radius_m:
+                distances.append((idx, dist))
+
+        # Sort by distance, take closest up to max_points
+        distances.sort(key=lambda x: x[1])
+        selected = [i for i, _ in distances[:max_points - 1]]  # -1 to account for center
+
+        if len(selected) + 1 >= min_points:
+            # Assign cluster
+            cluster_members.extend(selected)
+            for idx in cluster_members:
+                df.at[idx, 'Cluster'] = cluster_id
+                unclustered.discard(idx)
+            print(f"✅ Cluster {cluster_id} created with {len(cluster_members)} Electricity meters.")
+            cluster_id += 1
+        else:
+            # Too few points nearby — skip
+            skipped += 1
+            if skipped % 50 == 0:
+                print(f"⚠️ Skipped {skipped} centers so far...")
+            if skipped > fail_limit:
+                print("⛔ Stopping clustering: too many points skipped.")
+                break
+
+    print(f"✅ Clustering finished. {cluster_id} clusters formed. {len(unclustered)} points unclustered.")
+    return df
+
+
+
+def create_circle_coords(center, radius_m, num_points=36):
+    circle_coords = []
+    for angle in np.linspace(0, 360, num_points, endpoint=False):
+        dest = geopy.distance.distance(meters=radius_m).destination(center, angle)
+        circle_coords.append((dest.longitude, dest.latitude))
+    circle_coords.append(circle_coords[0])
+    return circle_coords
+
+def snap_to_road(lat, lon, road_gdf):
+    pt = Point(lon, lat)
+    pt_proj = gpd.GeoSeries([pt], crs="EPSG:4326").to_crs(epsg=32643)[0]
+    road_proj = road_gdf.to_crs(epsg=32643)
+
+    road_proj['dist'] = road_proj.geometry.distance(pt_proj)
+    nearest = road_proj.loc[road_proj['dist'].idxmin()]
+    snapped_pt_proj = nearest.geometry.interpolate(nearest.geometry.project(pt_proj))
+    snapped_pt = gpd.GeoSeries([snapped_pt_proj], crs="EPSG:32643").to_crs(epsg=4326)[0]
+    return snapped_pt.y, snapped_pt.x  # lat, lon
+
+# ---------- Main Processing Function ---------- #
+
+def generate_gateways(csv_file, output_dir, radius_val):
+    df = pd.read_csv(csv_file)
+    df = df.dropna(subset=['LATITUDE', 'LONGITUDE'])
+    df = cluster_within_radius(df, max_radius_m=radius_val)
+    gateway_locations = df.groupby('Cluster')[['LATITUDE', 'LONGITUDE']].mean().reset_index()
+
+    # Get roads from OSM
+    center_lat = df['LATITUDE'].mean()
+    center_lon = df['LONGITUDE'].mean()
+    G = ox.graph_from_point((center_lat, center_lon), dist=2000, network_type='drive')
+    road_gdf = ox.graph_to_gdfs(G, nodes=False)
+
+    kml_points = simplekml.Kml()
+    kml_circles = simplekml.Kml()
+
+    for i, row in gateway_locations.iterrows():
+        cluster_id = row['Cluster']
+        lat, lon = row['LATITUDE'], row['LONGITUDE']
+        snapped_lat, snapped_lon = snap_to_road(lat, lon, road_gdf)
+        center = (snapped_lat, snapped_lon)
+
+        # Add gateway point
+        pnt = kml_points.newpoint(name=f"Gateway {i+1}", coords=[(snapped_lon, snapped_lat)])
+        pnt.style.iconstyle.color = simplekml.Color.yellow
+        pnt.style.iconstyle.scale = 1.5
+
+        # Calculate max radius
+        meters = df[df['Cluster'] == cluster_id]
+        max_dist = max([
+            geopy.distance.geodesic(center, (m['LATITUDE'], m['LONGITUDE'])).meters
+            for _, m in meters.iterrows()
+        ])
+        max_dist = min(max_dist, radius_val)
+
+        # Draw coverage circle
+        circle_coords = create_circle_coords(center, max_dist)
+        pol = kml_circles.newpolygon(name=f"Gateway {i+1} Coverage ({int(max_dist)}m)", outerboundaryis=circle_coords)
+        pol.style.polystyle.color = simplekml.Color.changealphaint(70, simplekml.Color.yellow)
+        pol.style.linestyle.width = 2
+        pol.style.linestyle.color = simplekml.Color.red
+
+    out1 = os.path.join(output_dir, "output_gateway_map.kml")
+    out2 = os.path.join(output_dir, "gateway_radius_circles.kml")
+    kml_points.save(out1)
+    kml_circles.save(out2)
+    return f"KML files created:\n- {out1}\n- {out2}\nClusters Formed: {len(gateway_locations)}"
+
+# ---------- GUI ---------- #
+
+def upload_file():
+    file_path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv")])
+    output_dir = filedialog.askdirectory(title="Select Output Folder")
+    if not file_path or not output_dir:
+        messagebox.showwarning("Missing input", "Please select both CSV and Output Folder.")
+        return
+    try:
+        radius_val = int(radius_entry.get())
+        result = generate_gateways(file_path, output_dir, radius_val)
+        messagebox.showinfo("Success", result)
+    except Exception as e:
+        messagebox.showerror("Error", f"An error occurred:\n{e}")
+
+root = tk.Tk()
+root.title("📍 Gateway Generator Tool (Snaps to Roads)")
+root.geometry("400x250")
+
+frame = ttk.Frame(root, padding="20")
+frame.pack(fill=tk.BOTH, expand=True)
+
+title = ttk.Label(frame, text="Gateway Generator", font=("Arial", 16))
+title.pack(pady=10)
+
+radius_label = ttk.Label(frame, text="Enter Radius (in meters):")
+radius_label.pack()
+
+radius_entry = ttk.Entry(frame)
+radius_entry.insert(0, "300")
+radius_entry.pack(pady=5)
+
+upload_button = ttk.Button(frame, text="📤 Upload CSV and Generate", command=upload_file)
+upload_button.pack(pady=20)
+
+root.mainloop()
+
