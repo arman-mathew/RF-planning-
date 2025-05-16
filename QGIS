@@ -3,6 +3,8 @@ QGIS version
 QGIS code revision
 402273f8c2
 
+Google Satellite : http://mt1.google.com/vt/lyrs=s&x={x}&y={y}&z={z}
+ 
 Google Open Buildings : 
 step 1 : Download the building footprints in csv from https://sites.research.google/gr/open-buildings/#open-buildings-download
 step2: open QGIS>LAYER>ADD LAYER> ADD DELIMITED LAYER
