@@ -1,0 +1,324 @@
+# Required libraries for data handling, math, GUI, and file operations
+import pandas as pd  # DataFrame handling
+import numpy as np   # (Not directly used, but common for array operations)
+import tkinter as tk  # GUI framework
+from tkinter import filedialog, messagebox, simpledialog, ttk  # GUI widgets & dialogs
+from math import radians, cos, sin, asin, sqrt  # Needed for haversine formula (distance calculation)
+import re  # For regular expressions (used to extract RSRP)
+import os  # File and path operations
+import datetime  # For timestamp display
+
+# Main GUI class definition
+class AutoFinalPoleSelector:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Auto Final Pole Selector")  # Window title
+        self.root.geometry("800x600")  # Set initial size
+        self.root.configure(bg="#f0f0f0")  # Light grey background
+
+        # Try to set an icon for the window
+        try:
+            self.root.iconbitmap("icon.ico")
+        except:
+            pass  # Ignore if icon is missing
+
+        # Define tkinter StringVar/DoubleVar to bind GUI entries
+        self.planned_file = tk.StringVar()
+        self.surveyed_file = tk.StringVar()
+        self.threshold = tk.DoubleVar(value=50.0)  # Default threshold in meters
+        self.status = tk.StringVar(value="Ready")
+        self.progress = tk.IntVar(value=0)
+
+        # Create the main container frame
+        self.main_frame = tk.Frame(self.root, bg="#f0f0f0")
+        self.main_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=20)
+
+        # Layout components
+        self.create_header()
+        self.content_frame = tk.Frame(self.main_frame, bg="white", bd=2, relief=tk.GROOVE)
+        self.content_frame.pack(fill=tk.BOTH, expand=True, pady=10)
+
+        self.create_file_selection()
+        self.create_settings()
+        self.create_buttons()
+        self.create_status_bar()
+        self.create_footer()
+
+    # Header section with title and subtitle
+    def create_header(self):
+        header_frame = tk.Frame(self.main_frame, bg="#0066cc", height=80)
+        header_frame.pack(fill=tk.X, pady=(0, 15))
+
+        title_label = tk.Label(header_frame, text="Auto Final Pole Selector", font=("Arial", 24, "bold"), fg="white", bg="#0066cc")
+        title_label.pack(side=tk.LEFT, padx=20, pady=20)
+
+        subtitle_label = tk.Label(header_frame, text="Gateway Survey Analysis Tool", font=("Arial", 12), fg="white", bg="#0066cc")
+        subtitle_label.place(x=24, y=55)
+
+    # File selection inputs
+    def create_file_selection(self):
+        file_frame = ttk.LabelFrame(self.content_frame, text="File Selection", padding=(20, 10))
+        file_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        # Planned gateway file input
+        ttk.Label(file_frame, text="Planned Gateway CSV:").grid(row=0, column=0, sticky=tk.W, pady=5)
+        ttk.Entry(file_frame, textvariable=self.planned_file, width=50).grid(row=0, column=1, padx=5, pady=5, sticky=tk.W+tk.E)
+        ttk.Button(file_frame, text="Browse...", command=self.select_planned_file).grid(row=0, column=2, padx=5, pady=5)
+
+        # Surveyed gateway file input
+        ttk.Label(file_frame, text="Surveyed Gateway CSV:").grid(row=1, column=0, sticky=tk.W, pady=5)
+        ttk.Entry(file_frame, textvariable=self.surveyed_file, width=50).grid(row=1, column=1, padx=5, pady=5, sticky=tk.W+tk.E)
+        ttk.Button(file_frame, text="Browse...", command=self.select_surveyed_file).grid(row=1, column=2, padx=5, pady=5)
+
+        file_frame.columnconfigure(1, weight=1)  # Allow column 1 to stretch
+
+    # Threshold setting input
+    def create_settings(self):
+        settings_frame = ttk.LabelFrame(self.content_frame, text="Settings", padding=(20, 10))
+        settings_frame.pack(fill=tk.X, padx=20, pady=10)
+
+        ttk.Label(settings_frame, text="Distance Threshold (meters):").grid(row=0, column=0, sticky=tk.W, pady=5)
+        ttk.Entry(settings_frame, textvariable=self.threshold, width=10).grid(row=0, column=1, padx=5, pady=5, sticky=tk.W)
+        ttk.Label(settings_frame, text="Maximum allowed distance between planned and surveyed locations").grid(row=0, column=2, padx=5, pady=5, sticky=tk.W)
+
+    # Buttons for running analysis and resetting form
+    def create_buttons(self):
+        button_frame = tk.Frame(self.content_frame, bg="white")
+        button_frame.pack(fill=tk.X, padx=20, pady=20)
+
+        # Style for button font
+        style = ttk.Style()
+        style.configure("Accent.TButton", font=("Arial", 12, "bold"))
+
+        ttk.Button(button_frame, text="Run Analysis", command=self.run_tool, style="Accent.TButton").pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Reset", command=self.reset_form).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Help", command=self.show_help).pack(side=tk.RIGHT, padx=5)
+
+    # Progress bar and status label
+    def create_status_bar(self):
+        status_frame = tk.Frame(self.content_frame, bg="white")
+        status_frame.pack(fill=tk.X, padx=20, pady=(0, 10))
+
+        self.progress_bar = ttk.Progressbar(status_frame, variable=self.progress, mode="determinate", length=700)
+        self.progress_bar.pack(fill=tk.X, pady=(0, 5))
+
+        ttk.Label(status_frame, textvariable=self.status).pack(side=tk.LEFT)
+
+        now = datetime.datetime.now()
+        ttk.Label(status_frame, text=now.strftime("%Y-%m-%d %H:%M")).pack(side=tk.RIGHT)
+
+    # Footer section with version info
+    def create_footer(self):
+        footer_frame = tk.Frame(self.main_frame, bg="#f0f0f0", height=30)
+        footer_frame.pack(fill=tk.X, side=tk.BOTTOM)
+
+        tk.Label(footer_frame, text="v1.0.0", font=("Arial", 8), fg="#666666", bg="#f0f0f0").pack(side=tk.LEFT)
+        tk.Label(footer_frame, text="Designed by Arman Mathew", font=("Arial", 8), fg="#666666", bg="#f0f0f0").pack(side=tk.RIGHT)
+
+    # File browser for planned file
+    def select_planned_file(self):
+        file_path = filedialog.askopenfilename(title="Select Planned Gateway CSV File", filetypes=[("CSV files", "*.csv")])
+        if file_path:
+            self.planned_file.set(file_path)
+            self.status.set(f"Planned file selected: {os.path.basename(file_path)}")
+
+    # File browser for surveyed file
+    def select_surveyed_file(self):
+        file_path = filedialog.askopenfilename(title="Select Surveyed Gateway CSV File", filetypes=[("CSV files", "*.csv")])
+        if file_path:
+            self.surveyed_file.set(file_path)
+            self.status.set(f"Surveyed file selected: {os.path.basename(file_path)}")
+
+    # Reset form values
+    def reset_form(self):
+        self.planned_file.set("")
+        self.surveyed_file.set("")
+        self.threshold.set(50.0)
+        self.status.set("Ready")
+        self.progress.set(0)
+
+    # Show help instructions
+    def show_help(self):
+        help_text = """
+        Auto Final Pole Selector - Help
+
+        This tool compares planned gateway locations with surveyed pole locations
+        to find the most suitable pole for each gateway.
+
+        Instructions:
+        1. Select the CSV file containing planned gateway locations
+        2. Select the CSV file containing surveyed pole locations
+        3. Set the maximum allowed distance between planned and actual locations
+        4. Click \"Run Analysis\" to process the files
+        5. Save the results to a CSV file
+        6. Review is required !!
+        
+        for more info contact: mathewarman2003@gmail.com
+        """
+        messagebox.showinfo("Help", help_text)
+
+    # Haversine formula for geographic distance calculation
+    def haversine(self, lat1, lon1, lat2, lon2):
+        R = 6371000  # Radius of Earth in meters
+        lat1, lon1, lat2, lon2 = map(radians, [lat1, lon1, lat2, lon2])
+        dlat = lat2 - lat1
+        dlon = lon2 - lon1
+        a = sin(dlat/2)**2 + cos(lat1)*cos(lat2)*sin(dlon/2)**2
+        c = 2 * asin(sqrt(a))
+        return R * c
+
+    # Extract RSRP from string using regex
+    def extract_rsrp(self, value):
+        if pd.isna(value):
+            return None
+        match = re.search(r"-\d{2,3}", str(value))  # Looks for e.g., -123
+        return int(match.group()) if match else None
+
+    # Main processing logic
+    def process_files(self, planned_file, surveyed_file, distance_threshold):
+        self.status.set("Loading files...")
+        self.progress.set(10)
+        self.root.update_idletasks()
+
+        # Load both CSVs
+        planned_df = pd.read_csv(planned_file)
+        surveyed_df = pd.read_csv(surveyed_file)
+
+        # Remove any leading/trailing spaces in column names
+        planned_df.columns = planned_df.columns.str.strip()
+        surveyed_df.columns = surveyed_df.columns.str.strip()
+
+        # Extract RSRP values
+        self.status.set("Processing RSRP values...")
+        self.progress.set(20)
+        self.root.update_idletasks()
+
+        signal_idx = surveyed_df.columns.get_loc("Signal Strength")
+        rsrp_col = surveyed_df.columns[signal_idx + 1]
+        surveyed_df['RSRP'] = surveyed_df[rsrp_col].apply(self.extract_rsrp)
+
+        # Ensure numeric and complete lat/lon
+        surveyed_df = surveyed_df.dropna(subset=['latitude', 'longitude'])
+        surveyed_df['latitude'] = surveyed_df['latitude'].astype(float)
+        surveyed_df['longitude'] = surveyed_df['longitude'].astype(float)
+
+        self.status.set("Comparing locations...")
+        self.progress.set(30)
+        self.root.update_idletasks()
+
+        output_rows = []
+        total_rows = len(planned_df)
+
+        # Main loop: for each planned gateway, find best surveyed pole
+        for idx, planned_row in planned_df.iterrows():
+            progress_val = 30 + int(70 * (idx + 1) / total_rows)
+            self.progress.set(progress_val)
+            self.status.set(f"Processing gateway {idx+1} of {total_rows}...")
+            self.root.update_idletasks()
+
+            gateway_id = f"GW_{idx+1}"
+            lat_p = float(planned_row.get('latitude') or planned_row.get('latitude '))
+            lon_p = float(planned_row['longitude'])
+
+            # Calculate distances to all surveyed poles
+            surveyed_df['distance'] = surveyed_df.apply(
+                lambda row: self.haversine(lat_p, lon_p, row['latitude'], row['longitude']), axis=1
+            )
+
+            closest = surveyed_df.loc[surveyed_df['distance'].idxmin()].copy()
+            base_label = str(closest['Pole Reference No'])
+            suffix = ""
+
+            # Apply tagging rules based on survey data
+            if str(closest['Suitable pole for Gateway']).strip().lower() == 'no':
+                suffix += "NO"
+            else:
+                rsrp = closest['RSRP']
+                if rsrp is not None and -130 <= rsrp <= -115:
+                    suffix += "High"
+
+            if closest['distance'] > distance_threshold:
+                suffix += "A"
+                lat_output = lat_p
+                lon_output = lon_p
+            else:
+                lat_output = closest['latitude']
+                lon_output = closest['longitude']
+
+            label = base_label + suffix
+
+            # Create result row
+            result = {
+                'Gateway ID': gateway_id,
+                'Planned Latitude': f"{lat_p:.7f}",
+                'Planned Longitude': f"{lon_p:.7f}",
+                'Output Latitude': f"{lat_output:.7f}",
+                'Output Longitude': f"{lon_output:.7f}",
+                'Selected Pole': label,
+                'Distance (m)': round(closest['distance'], 2),
+            }
+
+            # Include other surveyed data in output
+            for col in surveyed_df.columns:
+                if col != 'distance':
+                    result[f"Pole - {col}"] = closest[col]
+
+            output_rows.append(result)
+
+        output_df = pd.DataFrame(output_rows)
+        self.status.set("Processing complete")
+        self.progress.set(100)
+        return output_df
+
+    # Button click handler
+    def run_tool(self):
+        if not self.planned_file.get():
+            messagebox.showerror("Input Error", "Please select a planned gateway CSV file.")
+            return
+
+        if not self.surveyed_file.get():
+            messagebox.showerror("Input Error", "Please select a surveyed gateway CSV file.")
+            return
+
+        try:
+            threshold = self.threshold.get()
+            if threshold <= 0:
+                raise ValueError("Threshold must be positive")
+        except:
+            messagebox.showerror("Input Error", "Please enter a valid number for the threshold.")
+            return
+
+        try:
+            result_df = self.process_files(
+                self.planned_file.get(), self.surveyed_file.get(), threshold
+            )
+            save_path = filedialog.asksaveasfilename(
+                defaultextension=".csv", filetypes=[("CSV files", "*.csv")], title="Save Results"
+            )
+
+            if save_path:
+                result_df.to_csv(save_path, index=False)
+                self.status.set(f"File saved: {os.path.basename(save_path)}")
+                messagebox.showinfo("Success", f"Analysis complete!\nFile saved to:\n{save_path}")
+        except Exception as e:
+            self.status.set("Error during processing")
+            messagebox.showerror("Error", str(e))
+
+# Run the application
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = AutoFinalPoleSelector(root)
+
+    # Style theme and widget font settings
+    style = ttk.Style()
+    style.theme_use('clam')
+    style.configure("TLabel", font=("Arial", 10))
+    style.configure("TButton", font=("Arial", 10))
+    style.configure("TEntry", font=("Arial", 10))
+
+    root.minsize(700, 500)
+    root.mainloop()
+
+
+
+//////
